@@ -30,32 +30,34 @@ def is_message_type_delete(event):
 def is_reason_in_skip_list(event, skip_list):
     return True if event['object'].reason in skip_list else False
 
+def cluster_name():
+    return read_env_variable_or_die('K8S_EVENTS_STREAMER_CLUSTER_NAME')
+
+def field_format(key, value):
+    return {
+        'title': key,
+        'value': value,
+        'short': 'true'
+    }
+
 def format_k8s_event_to_slack_message(event_object, notify=''):
     event = event_object['object']
+    fields_data = {
+        'Namespace': event.involved_object.namespace,
+        'Name': event.metadata.name,
+        'Creation': event.metadata.creation_timestamp.strftime('%d/%m/%Y %H:%M:%S %Z'),
+        'Kind': event.involved_object.kind,
+    }
     message = {
-        'attachments': [ {
+        'attachments': [{
             'color': '#36a64f',
             'title': event.message,
-            'text': 'event type: {}, event reason: {}'.format(event_object['type'], event.reason),
+            'text': '{} - event type: {}, event reason: {}'.format(cluster_name(), event_object['type'], event.reason),
             'footer': 'First time seen: {}, Last time seen: {}, Count: {}'.format(event.first_timestamp.strftime('%d/%m/%Y %H:%M:%S %Z'),
                                                                                   event.last_timestamp.strftime('%d/%m/%Y %H:%M:%S %Z'),
                                                                                   event.count),
-            'fields': [
-                {
-                    'title': 'Involved object',
-                    'value': 'kind: {}, name: {}, namespace: {}'.format(event.involved_object.kind,
-                                                                       event.involved_object.name,
-                                                                       event.involved_object.namespace),
-                    'short': 'true'
-               },
-               {
-                    'title': 'Metadata',
-                    'value': 'name: {}, creation time: {}'.format(event.metadata.name,
-                                                                  event.metadata.creation_timestamp.strftime('%d/%m/%Y %H:%M:%S %Z')),
-                    'short': 'true'
-               }
-           ],
-       }]
+            'fields': [field_format(key, value) for key, value in fields_data.items()],
+        }]
     }
     if event.type == 'Warning':
         message['attachments'][0]['color'] = '#cc4d26'

@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import time
 
 import kubernetes
@@ -23,6 +24,9 @@ def post_slack_message(hook_url, message):
     logger.debug('Posting the following message to {}:\n{}'.format(hook_url, message))
     headers = {'Content-type': 'application/json'}
     r = requests.post(hook_url, data = str(message), headers=headers)
+
+def event_entity_name(event):
+    return event['object'].metadata.name
 
 def is_message_type_delete(event):
     return True if event['type'] == 'DELETED' else False
@@ -79,6 +83,7 @@ def main():
     reasons_to_skip = os.environ.get('K8S_EVENTS_STREAMER_LIST_OF_REASONS_TO_SKIP', "").split()
     users_to_notify = os.environ.get('K8S_EVENTS_STREAMER_USERS_TO_NOTIFY', '')
     slack_web_hook_url = read_env_variable_or_die('K8S_EVENTS_STREAMER_INCOMING_WEB_HOOK_URL')
+    entity_blacklist = os.environ.get('K8S_EVENTS_STREAMER_ENTITY_BLACKLIST', '').split()
     configuration = kubernetes.config.load_incluster_config()
     v1 = kubernetes.client.CoreV1Api()
     k8s_watch = kubernetes.watch.Watch()
@@ -89,10 +94,18 @@ def main():
         for event in k8s_watch.stream(v1.list_namespaced_event, k8s_namespace_name):
             logger.debug(str(event))
             if is_message_type_delete(event) and skip_delete_events != False:
-                logger.debug('Event type DELETED and skip deleted events is enabled. Skip this one')
+                logger.debug('Event type DELETED and skip deleted events is enabled. Skipping.')
                 continue
             if is_reason_in_skip_list(event, reasons_to_skip) == True:
-                logger.debug('Event reason is in the skip list. Skip it')
+                logger.debug('Event reason is in the skip list. Skipping.')
+                continue
+            entity_name = event_entity_name(event)
+            matched_blacklist = False
+            for pattern in entity_blacklist:
+                if re.search(pattern, entity_name) != None:
+                    logger.debug('Event entity "{}" matches blacklist pattern "{}". Skipping.'.format(entity_name, pattern))
+                    matched_blacklist = True
+            if matched_blacklist:
                 continue
             message = format_k8s_event_to_slack_message(event, users_to_notify)
             post_slack_message(slack_web_hook_url, message)
